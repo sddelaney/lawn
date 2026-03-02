@@ -19,6 +19,7 @@ import {
   getMuxAsset,
 } from "./mux";
 import { BUCKET_NAME, getS3Client } from "./s3";
+import { isAsperaEnabled, getUploadTransferSpec } from "./hsts";
 
 const GIBIBYTE = 1024 ** 3;
 const MAX_PRESIGNED_PUT_FILE_SIZE_BYTES = 5 * GIBIBYTE;
@@ -521,5 +522,43 @@ export const getDownloadUrl = action({
       }),
       filename,
     };
+  },
+});
+
+export const getAsperaUploadSpec = action({
+  args: {
+    videoId: v.id("videos"),
+    filename: v.string(),
+    fileSize: v.number(),
+    contentType: v.string(),
+  },
+  returns: v.object({
+    transferSpec: v.any(),
+    s3Key: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    if (!isAsperaEnabled()) {
+      throw new Error("Aspera uploads are not enabled");
+    }
+
+    await requireVideoMemberAccess(ctx, args.videoId);
+    const normalizedContentType = validateUploadRequestOrThrow({
+      fileSize: args.fileSize,
+      contentType: args.contentType,
+    });
+
+    const ext = getExtensionFromKey(args.filename);
+    const key = `videos/${args.videoId}/${Date.now()}.${ext}`;
+
+    await ctx.runMutation(internal.videos.setUploadInfo, {
+      videoId: args.videoId,
+      s3Key: key,
+      fileSize: args.fileSize,
+      contentType: normalizedContentType,
+    });
+
+    const transferSpec = await getUploadTransferSpec(`/${key}`);
+
+    return { transferSpec, s3Key: key };
   },
 });
