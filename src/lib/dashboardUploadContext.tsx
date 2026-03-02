@@ -2,6 +2,8 @@ import { createContext, useContext, type ReactNode } from "react";
 import type { Id } from "@convex/_generated/dataModel";
 import type { UploadStatus } from "@/components/upload/UploadProgress";
 
+type UploadMethod = "s3-direct" | "aspera";
+
 export type DashboardUploadContextValue = {
   requestUpload: (files: File[], preferredProjectId?: Id<"projects">) => void;
   uploads: {
@@ -13,8 +15,12 @@ export type DashboardUploadContextValue = {
     error?: string;
     bytesPerSecond?: number;
     estimatedSecondsRemaining?: number | null;
+    transferMethod?: UploadMethod;
   }[];
   cancelUpload: (uploadId: string) => void;
+  uploadMethod: UploadMethod;
+  setUploadMethod: (method: UploadMethod) => void;
+  asperaAvailable: boolean;
 };
 
 const DashboardUploadContext = createContext<DashboardUploadContextValue | null>(null);

@@ -75,6 +75,9 @@ export default function DashboardLayout() {
     uploads,
     uploadFilesToProject,
     cancelUpload,
+    uploadMethod,
+    setUploadMethod,
+    asperaAvailable,
   } = useVideoUploadManager();
   const [isGlobalDragActive, setIsGlobalDragActive] = useState(false);
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
@@ -193,8 +196,11 @@ export default function DashboardLayout() {
       requestUpload,
       uploads,
       cancelUpload,
+      uploadMethod,
+      setUploadMethod,
+      asperaAvailable,
     }),
-    [requestUpload, uploads, cancelUpload],
+    [requestUpload, uploads, cancelUpload, uploadMethod, setUploadMethod, asperaAvailable],
   );
   const isResolvingPublicPlaybackExemption =
     Boolean(isLoaded && !userId && routeVideoId) && publicPlaybackId === undefined;
@@ -267,6 +273,7 @@ export default function DashboardLayout() {
               error={upload.error}
               bytesPerSecond={upload.bytesPerSecond}
               estimatedSecondsRemaining={upload.estimatedSecondsRemaining}
+              transferMethod={upload.transferMethod}
               onCancel={() => cancelUpload(upload.id)}
             />
           ))}

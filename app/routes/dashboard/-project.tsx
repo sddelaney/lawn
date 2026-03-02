@@ -136,7 +136,7 @@ export default function ProjectPage({
     api.videoPresence.listProjectOnlineCounts,
     resolvedProjectId ? { projectId: resolvedProjectId } : "skip",
   );
-  const { requestUpload, uploads } =
+  const { requestUpload, uploads, uploadMethod, setUploadMethod, asperaAvailable } =
     useDashboardUploadContext();
   const deleteVideo = useMutation(api.videos.remove);
   const updateVideoWorkflowStatus = useMutation(api.videos.updateWorkflowStatus);
@@ -327,6 +327,9 @@ export default function ProjectPage({
               onFilesSelected={handleFilesSelected}
               disabled={!canUpload}
               className="max-w-xl w-full"
+              asperaAvailable={asperaAvailable}
+              uploadMethod={uploadMethod}
+              onUploadMethodChange={setUploadMethod}
             />
           </div>
         ) : viewMode === "grid" ? (
