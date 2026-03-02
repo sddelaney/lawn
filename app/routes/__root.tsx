@@ -98,6 +98,7 @@ function RootDocument({ children }: { children: ReactNode }) {
     <html lang="en" className="h-full" suppressHydrationWarning>
       <head>
         <HeadContent />
+        <script src="/aspera-sdk.js" defer />
       </head>
       <body className="h-full antialiased" suppressHydrationWarning>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
