@@ -28,6 +28,7 @@ interface UploadProgressProps {
   bytesPerSecond?: number;
   estimatedSecondsRemaining?: number | null;
   onCancel?: () => void;
+  transferMethod?: "s3-direct" | "aspera";
 }
 
 export function UploadProgress({
@@ -39,6 +40,7 @@ export function UploadProgress({
   bytesPerSecond = 0,
   estimatedSecondsRemaining = null,
   onCancel,
+  transferMethod,
 }: UploadProgressProps) {
   return (
     <div className="border-2 border-[#1a1a1a] p-4 bg-[#f0f0e8]">
@@ -74,7 +76,14 @@ export function UploadProgress({
         <div className="mt-3 space-y-1.5">
           <Progress value={progress} />
           <div className="flex justify-between text-xs text-[#888] font-mono">
-            <span>{formatSpeed(bytesPerSecond)}</span>
+            <span className="flex items-center gap-1.5">
+              {transferMethod === "aspera" ? (
+                <span className="bg-[#2d5a2d] text-[#f0f0e8] px-1.5 py-0.5 text-[10px] font-bold">FASP</span>
+              ) : transferMethod === "s3-direct" ? (
+                <span className="bg-[#e8e8e0] text-[#888] px-1.5 py-0.5 text-[10px] font-bold">HTTP</span>
+              ) : null}
+              {formatSpeed(bytesPerSecond)}
+            </span>
             <span>
               {progress}%
               {estimatedSecondsRemaining !== null && estimatedSecondsRemaining > 0 && (
