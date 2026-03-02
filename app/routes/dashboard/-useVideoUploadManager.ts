@@ -5,6 +5,8 @@ import { Id } from "@convex/_generated/dataModel";
 import type { UploadStatus } from "@/components/upload/UploadProgress";
 import {
   isSdkAvailable,
+  initSdk,
+  testConnection,
   startTransfer,
   stopTransfer,
   registerActivityCallback,
@@ -44,7 +46,25 @@ export function useVideoUploadManager() {
   const markUploadFailed = useAction(api.videoActions.markUploadFailed);
   const [uploads, setUploads] = useState<ManagedUploadItem[]>([]);
   const [uploadMethod, setUploadMethod] = useState<UploadMethod>("s3-direct");
-  const asperaAvailable = isSdkAvailable();
+  const [asperaAvailable, setAsperaAvailable] = useState(false);
+
+  // Initialize Aspera SDK on mount (async: init → testConnection)
+  useEffect(() => {
+    if (!isSdkAvailable()) return;
+
+    initSdk({ appId: "lawn" })
+      .then(() => testConnection())
+      .then((connected) => {
+        setAsperaAvailable(connected);
+        if (connected) {
+          setUploadMethod("aspera");
+        }
+      })
+      .catch((err) => {
+        console.warn("Aspera SDK init failed:", err);
+        setAsperaAvailable(false);
+      });
+  }, []);
 
   // Track Aspera transfer UUID → local upload ID mapping
   const asperaMapRef = useRef<Map<string, { uploadId: string; videoId: Id<"videos"> }>>(new Map());
