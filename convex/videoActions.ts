@@ -30,6 +30,47 @@ const ALLOWED_UPLOAD_CONTENT_TYPES = new Set([
   "video/x-matroska",
 ]);
 
+type MuxAssetErrorItem = { message?: string };
+type MuxAssetErrorObject = { message?: string };
+type MuxAssetPlaybackId = { id?: string; policy?: string };
+type MuxAssetSnapshot = {
+  status?: string;
+  duration?: number;
+  playback_ids?: MuxAssetPlaybackId[];
+  errors?: MuxAssetErrorItem[];
+  error?: MuxAssetErrorObject;
+};
+
+function getPreferredMuxPlaybackId(playbackIds: MuxAssetPlaybackId[] | undefined): string | null {
+  if (!Array.isArray(playbackIds) || playbackIds.length === 0) {
+    return null;
+  }
+
+  const publicPlaybackId =
+    playbackIds.find((item) => item.policy === "public" && typeof item.id === "string")?.id ?? null;
+  if (publicPlaybackId) {
+    return publicPlaybackId;
+  }
+
+  const signedPlaybackId =
+    playbackIds.find((item) => item.policy === "signed" && typeof item.id === "string")?.id ?? null;
+  if (signedPlaybackId) {
+    return signedPlaybackId;
+  }
+
+  return playbackIds.find((item) => typeof item.id === "string")?.id ?? null;
+}
+
+function getMuxAssetErrorMessage(asset: MuxAssetSnapshot): string | null {
+  if (Array.isArray(asset.errors)) {
+    const firstNested = asset.errors.find((item) => typeof item.message === "string")?.message;
+    if (firstNested) {
+      return firstNested;
+    }
+  }
+  return typeof asset.error?.message === "string" ? asset.error.message : null;
+}
+
 function getExtensionFromKey(key: string, fallback = "mp4") {
   let source = key;
   if (key.startsWith("http://") || key.startsWith("https://")) {
@@ -116,12 +157,22 @@ function isAllowedUploadContentType(contentType: string): boolean {
   return ALLOWED_UPLOAD_CONTENT_TYPES.has(contentType);
 }
 
-function validateUploadRequestOrThrow(args: { fileSize: number; contentType: string }) {
-  if (!Number.isFinite(args.fileSize) || args.fileSize <= 0) {
+function validateUploadRequestOrThrow(
+  args: { fileSize: number; contentType: string },
+  options?: { allowUnknownFileSize?: boolean },
+) {
+  const allowUnknownFileSize = options?.allowUnknownFileSize === true;
+  if (!Number.isFinite(args.fileSize) || args.fileSize < 0) {
+    throw new Error("Video file size must be zero or greater.");
+  }
+
+  const fileSizeIsKnown = args.fileSize > 0;
+
+  if (!allowUnknownFileSize && !fileSizeIsKnown) {
     throw new Error("Video file size must be greater than zero.");
   }
 
-  if (args.fileSize > MAX_PRESIGNED_PUT_FILE_SIZE_BYTES) {
+  if (fileSizeIsKnown && args.fileSize > MAX_PRESIGNED_PUT_FILE_SIZE_BYTES) {
     throw new Error("Video file is too large for direct upload.");
   }
 
@@ -280,9 +331,15 @@ export const markUploadComplete = action({
         throw new Error("Video file is too large for direct upload.");
       }
 
-      const normalizedContentType = normalizeContentType(
+      const normalizedHeadContentType = normalizeContentType(
         head.ContentType ?? video.contentType,
       );
+      const normalizedStoredContentType = normalizeContentType(
+        video.contentType,
+      );
+      const normalizedContentType = isAllowedUploadContentType(normalizedHeadContentType)
+        ? normalizedHeadContentType
+        : normalizedStoredContentType;
       if (!isAllowedUploadContentType(normalizedContentType)) {
         throw new Error("Unsupported video format. Allowed: mp4, mov, webm, mkv.");
       }
@@ -545,7 +602,7 @@ export const getAsperaUploadSpec = action({
     const normalizedContentType = validateUploadRequestOrThrow({
       fileSize: args.fileSize,
       contentType: args.contentType,
-    });
+    }, { allowUnknownFileSize: true });
 
     const ext = getExtensionFromKey(args.filename);
     const key = `videos/${args.videoId}/${Date.now()}.${ext}`;
@@ -560,5 +617,91 @@ export const getAsperaUploadSpec = action({
     const transferSpec = await getUploadTransferSpec(`/${key}`);
 
     return { transferSpec, s3Key: key };
+  },
+});
+
+export const reconcileProcessingStatus = action({
+  args: {
+    videoId: v.id("videos"),
+  },
+  returns: v.object({
+    status: v.union(v.literal("missing"), v.literal("processing"), v.literal("ready"), v.literal("failed")),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ status: "missing" | "processing" | "ready" | "failed" }> => {
+    await requireVideoMemberAccess(ctx, args.videoId);
+
+    const video = await ctx.runQuery(api.videos.getVideoForPlayback, {
+      videoId: args.videoId,
+    });
+    if (!video) {
+      return { status: "missing" };
+    }
+
+    if (video.status === "ready") {
+      return { status: "ready" };
+    }
+    if (video.status === "failed") {
+      return { status: "failed" };
+    }
+    if (video.status !== "processing") {
+      return { status: "processing" };
+    }
+
+    if (!video.muxAssetId) {
+      await ctx.runMutation(internal.videos.markAsFailed, {
+        videoId: args.videoId,
+        uploadError: "Mux asset reference is missing while video is processing.",
+      });
+      return { status: "failed" };
+    }
+
+    let asset: MuxAssetSnapshot;
+    try {
+      asset = (await getMuxAsset(video.muxAssetId)) as unknown as MuxAssetSnapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const normalizedMessage = message.toLowerCase();
+      if (normalizedMessage.includes("404") || normalizedMessage.includes("not found")) {
+        await ctx.runMutation(internal.videos.markAsFailed, {
+          videoId: args.videoId,
+          uploadError: "Mux asset was not found.",
+        });
+        return { status: "failed" };
+      }
+      throw error;
+    }
+
+    if (asset.status === "ready") {
+      const playbackId = getPreferredMuxPlaybackId(asset.playback_ids);
+      if (!playbackId) {
+        await ctx.runMutation(internal.videos.markAsFailed, {
+          videoId: args.videoId,
+          uploadError: "Mux marked asset ready but did not return a playback ID.",
+        });
+        return { status: "failed" };
+      }
+
+      await ctx.runMutation(internal.videos.markAsReady, {
+        videoId: args.videoId,
+        muxAssetId: video.muxAssetId,
+        muxPlaybackId: playbackId,
+        duration: typeof asset.duration === "number" ? asset.duration : undefined,
+        thumbnailUrl: buildMuxThumbnailUrl(playbackId),
+      });
+      return { status: "ready" };
+    }
+
+    if (asset.status === "errored") {
+      await ctx.runMutation(internal.videos.markAsFailed, {
+        videoId: args.videoId,
+        uploadError: getMuxAssetErrorMessage(asset) ?? "Mux failed to process this video.",
+      });
+      return { status: "failed" };
+    }
+
+    return { status: "processing" };
   },
 });

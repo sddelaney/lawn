@@ -2,13 +2,17 @@
 
 /**
  * Trigger a browser download for a presigned URL.
- * Falls back to opening a new tab if the download attribute is ignored.
+ *
+ * Uses plain navigation (no target="_blank") so the download works even when
+ * called from an async handler — popup blockers silently swallow programmatic
+ * window.open / target="_blank" clicks outside the original user-gesture context.
+ *
+ * The presigned S3 URL includes Content-Disposition: attachment, so the browser
+ * downloads the file without navigating away from the current page.
  */
 export function triggerDownload(url: string, filename?: string) {
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.rel = "noopener";
-  anchor.target = "_blank";
   if (filename) {
     anchor.download = filename;
   }

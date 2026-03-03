@@ -134,7 +134,7 @@ export default function ProjectPage({
     api.videoPresence.listProjectOnlineCounts,
     resolvedProjectId ? { projectId: resolvedProjectId } : "skip",
   );
-  const { requestUpload, uploadMethod, setUploadMethod, asperaAvailable } =
+  const { requestUpload, requestAsperaUpload, uploadMethod, setUploadMethod, asperaAvailable } =
     useDashboardUploadContext();
   const deleteVideo = useMutation(api.videos.remove);
   const updateVideoWorkflowStatus = useMutation(api.videos.updateWorkflowStatus);
@@ -179,12 +179,19 @@ export default function ProjectPage({
     [requestUpload, resolvedProjectId],
   );
 
+  const handleAsperaUpload = useCallback(() => {
+    if (!resolvedProjectId) return;
+    requestAsperaUpload(resolvedProjectId);
+  }, [requestAsperaUpload, resolvedProjectId]);
+
   const handleDeleteVideo = async (videoId: Id<"videos">) => {
     if (!confirm("Are you sure you want to delete this video?")) return;
     try {
       await deleteVideo({ videoId });
     } catch (error) {
       console.error("Failed to delete video:", error);
+      const message = error instanceof Error ? error.message : "Failed to delete video";
+      window.alert(message);
     }
   };
 
@@ -312,7 +319,11 @@ export default function ProjectPage({
             </button>
           </div>
           {canUpload && (
-            <UploadButton onFilesSelected={handleFilesSelected} />
+            <UploadButton
+              onFilesSelected={handleFilesSelected}
+              onAsperaUpload={handleAsperaUpload}
+              uploadMethod={uploadMethod}
+            />
           )}
         </div>
       </DashboardHeader>
@@ -323,6 +334,7 @@ export default function ProjectPage({
           <div className="h-full flex items-center justify-center p-6 animate-in fade-in duration-300">
             <DropZone
               onFilesSelected={handleFilesSelected}
+              onAsperaUpload={handleAsperaUpload}
               disabled={!canUpload}
               className="max-w-xl w-full"
               asperaAvailable={asperaAvailable}
@@ -341,7 +353,7 @@ export default function ProjectPage({
                 const thumbnailSrc = video.thumbnailUrl?.startsWith("http")
                   ? video.thumbnailUrl
                   : undefined;
-                const canDownload = Boolean(video.s3Key) && video.status !== "failed" && video.status !== "uploading";
+                const canDownload = Boolean(video.s3Key) && video.status === "ready";
                 const watchingCount =
                   projectPresenceCounts?.counts?.[video._id] ?? 0;
 
@@ -402,8 +414,7 @@ export default function ProjectPage({
                         <DropdownMenuContent align="end">
                           {canDownload && (
                             <DropdownMenuItem
-                              onClick={(e) => {
-                                e.stopPropagation();
+                              onSelect={() => {
                                 void handleDownloadVideo(
                                   video._id,
                                   video.title,
@@ -415,8 +426,7 @@ export default function ProjectPage({
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuItem
-                            onClick={(e) => {
-                              e.stopPropagation();
+                            onSelect={() => {
                               void handleShareVideo(video);
                             }}
                           >
@@ -426,9 +436,8 @@ export default function ProjectPage({
                           {canUpload && (
                             <DropdownMenuItem
                               className="text-[#dc2626] focus:text-[#dc2626]"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteVideo(video._id);
+                              onSelect={() => {
+                                void handleDeleteVideo(video._id);
                               }}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -484,7 +493,7 @@ export default function ProjectPage({
               const thumbnailSrc = video.thumbnailUrl?.startsWith("http")
                 ? video.thumbnailUrl
                 : undefined;
-              const canDownload = Boolean(video.s3Key) && video.status !== "failed" && video.status !== "uploading";
+              const canDownload = Boolean(video.s3Key) && video.status === "ready";
               const watchingCount =
                 projectPresenceCounts?.counts?.[video._id] ?? 0;
 
@@ -585,8 +594,7 @@ export default function ProjectPage({
                     <DropdownMenuContent align="end">
                       {canDownload && (
                         <DropdownMenuItem
-                          onClick={(e) => {
-                            e.stopPropagation();
+                          onSelect={() => {
                             void handleDownloadVideo(video._id, video.title);
                           }}
                         >
@@ -595,8 +603,7 @@ export default function ProjectPage({
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
+                        onSelect={() => {
                           void handleShareVideo(video);
                         }}
                       >
@@ -606,9 +613,8 @@ export default function ProjectPage({
                       {canUpload && (
                         <DropdownMenuItem
                           className="text-[#dc2626] focus:text-[#dc2626]"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDeleteVideo(video._id);
+                          onSelect={() => {
+                            void handleDeleteVideo(video._id);
                           }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
