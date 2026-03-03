@@ -9,8 +9,10 @@ import {
   testConnection,
   startTransfer,
   stopTransfer,
+  showSelectFileDialog,
   registerActivityCallback,
   parseAllTransfers,
+  isDialogCancellation,
 } from "@/lib/asperaSdk";
 
 export type UploadMethod = "s3-direct" | "aspera";
@@ -36,6 +38,23 @@ function createUploadId() {
     return crypto.randomUUID();
   }
   return Math.random().toString(36).slice(2);
+}
+
+function inferContentTypeFromFilename(filename: string): string {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "mov":
+    case "qt":
+      return "video/quicktime";
+    case "webm":
+      return "video/webm";
+    case "mkv":
+      return "video/x-matroska";
+    case "mp4":
+    case "m4v":
+    default:
+      return "video/mp4";
+  }
 }
 
 export function useVideoUploadManager() {
@@ -146,13 +165,121 @@ export function useVideoUploadManager() {
     });
   }, [asperaAvailable, markUploadComplete, markUploadFailed]);
 
+  // Aspera upload: opens SDK file picker, gets authorized paths, starts FASP transfer
+  const asperaUploadToProject = useCallback(
+    async (projectId: Id<"projects">) => {
+      // Open SDK's native file dialog — returns SDK-authorized file paths
+      let result: unknown;
+      try {
+        result = await showSelectFileDialog({ allowMultipleSelection: true });
+      } catch (error) {
+        if (isDialogCancellation(error)) {
+          return;
+        }
+        console.error("Aspera file picker failed:", error);
+        return;
+      }
+      const dataTransfer = result && typeof result === "object"
+        ? (result as Record<string, unknown>).dataTransfer
+        : undefined;
+      const filesArr = dataTransfer && typeof dataTransfer === "object"
+        ? (dataTransfer as Record<string, unknown>).files
+        : undefined;
+
+      if (!Array.isArray(filesArr) || filesArr.length === 0) return;
+
+      for (const sdkFile of filesArr) {
+        const filePath = typeof sdkFile === "object" && sdkFile !== null
+          ? (sdkFile as Record<string, string>).name ?? ""
+          : "";
+        if (!filePath) continue;
+
+        const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+        const contentType = inferContentTypeFromFilename(fileName);
+        const uploadId = createUploadId();
+        const title = fileName.replace(/\.[^/.]+$/, "");
+        // Create a minimal File-like object for the upload list
+        const dummyFile = new File([], fileName, { type: contentType });
+
+        setUploads((prev) => [
+          ...prev,
+          {
+            id: uploadId,
+            projectId,
+            file: dummyFile,
+            progress: 0,
+            status: "pending" as UploadStatus,
+            transferMethod: "aspera" as UploadMethod,
+          },
+        ]);
+
+        let createdVideoId: Id<"videos"> | undefined;
+        try {
+          createdVideoId = await createVideo({
+            projectId,
+            title,
+            fileSize: 0, // unknown until transfer starts
+            contentType,
+          });
+
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.id === uploadId
+                ? { ...u, videoId: createdVideoId, status: "uploading" as UploadStatus }
+                : u,
+            ),
+          );
+
+          const { transferSpec } = await getAsperaUploadSpec({
+            videoId: createdVideoId,
+            filename: fileName,
+            fileSize: 0,
+            contentType,
+          });
+
+          // Merge SDK-authorized source path into transfer spec
+          const fullSpec = {
+            ...transferSpec,
+            paths: [{ source: filePath }],
+          };
+          const asperaTransferId = await startTransfer(fullSpec, {});
+
+          asperaMapRef.current.set(asperaTransferId, {
+            uploadId,
+            videoId: createdVideoId,
+          });
+
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.id === uploadId
+                ? { ...u, asperaTransferId }
+                : u,
+            ),
+          );
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Upload failed";
+          setUploads((prev) =>
+            prev.map((u) =>
+              u.id === uploadId
+                ? { ...u, status: "error" as UploadStatus, error: errorMessage }
+                : u,
+            ),
+          );
+          if (createdVideoId) {
+            markUploadFailed({ videoId: createdVideoId }).catch(console.error);
+          }
+        }
+      }
+    },
+    [createVideo, getAsperaUploadSpec, markUploadFailed],
+  );
+
   const uploadFilesToProject = useCallback(
     async (projectId: Id<"projects">, files: File[]) => {
       for (const file of files) {
         const uploadId = createUploadId();
         const title = file.name.replace(/\.[^/.]+$/, "");
         const abortController = new AbortController();
-        const method = uploadMethod;
 
         setUploads((prev) => [
           ...prev,
@@ -163,7 +290,7 @@ export function useVideoUploadManager() {
             progress: 0,
             status: "pending",
             abortController,
-            transferMethod: method,
+            transferMethod: "s3-direct" as UploadMethod,
           },
         ]);
 
@@ -185,36 +312,8 @@ export function useVideoUploadManager() {
             ),
           );
 
-          if (method === "aspera") {
-            // ---- Aspera path ----
-            const { transferSpec } = await getAsperaUploadSpec({
-              videoId: createdVideoId,
-              filename: file.name,
-              fileSize: file.size,
-              contentType: file.type || "video/mp4",
-            });
-
-            const asperaTransferId = await startTransfer(
-              { paths: [{ source: file.name }] },
-              transferSpec,
-            );
-
-            asperaMapRef.current.set(asperaTransferId, {
-              uploadId,
-              videoId: createdVideoId,
-            });
-
-            setUploads((prev) =>
-              prev.map((upload) =>
-                upload.id === uploadId
-                  ? { ...upload, asperaTransferId }
-                  : upload,
-              ),
-            );
-
-            // Aspera progress/completion handled by activity callback above
-          } else {
-            // ---- S3 direct path (unchanged) ----
+          // ---- S3 direct path ----
+          {
             const { url } = await getUploadUrl({
               videoId: createdVideoId,
               filename: file.name,
@@ -275,7 +374,11 @@ export function useVideoUploadManager() {
               });
 
               xhr.addEventListener("error", () => {
-                reject(new Error("Upload failed: Network error"));
+                reject(
+                  new Error(
+                    "Upload failed: network/CORS error (check bucket CORS allows PUT and OPTIONS from this origin)",
+                  ),
+                );
               });
 
               xhr.addEventListener("abort", () => {
@@ -323,7 +426,7 @@ export function useVideoUploadManager() {
         }
       }
     },
-    [createVideo, getUploadUrl, getAsperaUploadSpec, markUploadComplete, markUploadFailed, uploadMethod],
+    [createVideo, getUploadUrl, markUploadComplete, markUploadFailed],
   );
 
   const cancelUpload = useCallback(
@@ -348,6 +451,7 @@ export function useVideoUploadManager() {
   return {
     uploads,
     uploadFilesToProject,
+    asperaUploadToProject,
     cancelUpload,
     uploadMethod,
     setUploadMethod,

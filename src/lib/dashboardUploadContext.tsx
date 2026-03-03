@@ -6,6 +6,7 @@ type UploadMethod = "s3-direct" | "aspera";
 
 export type DashboardUploadContextValue = {
   requestUpload: (files: File[], preferredProjectId?: Id<"projects">) => void;
+  requestAsperaUpload: (projectId: Id<"projects">) => void;
   uploads: {
     id: string;
     projectId: Id<"projects">;

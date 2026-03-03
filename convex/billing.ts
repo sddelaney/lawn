@@ -184,26 +184,18 @@ export const getTeamBilling = query({
     const { membership } = await requireTeamAccess(ctx, args.teamId);
     const subscriptionState = await getTeamSubscriptionState(ctx, args.teamId);
     const storageUsedBytes = await getTeamStorageUsedBytes(ctx, args.teamId);
-    const subscription = subscriptionState.subscription;
-
     return {
       plan: subscriptionState.plan,
       monthlyPriceUsd: TEAM_PLAN_MONTHLY_PRICE_USD[subscriptionState.plan],
       storageLimitBytes: TEAM_PLAN_STORAGE_LIMIT_BYTES[subscriptionState.plan],
       storageUsedBytes,
       hasActiveSubscription: subscriptionState.hasActiveSubscription,
-      subscriptionStatus:
-        subscription?.status ?? subscriptionState.team.billingStatus ?? null,
-      stripeCustomerId:
-        subscriptionState.team.stripeCustomerId ??
-        subscription?.stripeCustomerId ??
-        null,
-      stripeSubscriptionId:
-        subscription?.stripeSubscriptionId ??
-        subscriptionState.team.stripeSubscriptionId ??
-        null,
-      stripePriceId: subscription?.priceId ?? subscriptionState.team.stripePriceId ?? null,
-      currentPeriodEnd: subscription?.currentPeriodEnd ?? null,
+      // BYPASS: Stripe disabled — null out all Stripe fields
+      subscriptionStatus: subscriptionState.team.billingStatus ?? "active",
+      stripeCustomerId: subscriptionState.team.stripeCustomerId ?? null,
+      stripeSubscriptionId: subscriptionState.team.stripeSubscriptionId ?? null,
+      stripePriceId: subscriptionState.team.stripePriceId ?? null,
+      currentPeriodEnd: null,
       role: membership.role,
       canManageBilling: membership.role === "owner",
     };

@@ -61,6 +61,7 @@ export default function DashboardLayout() {
   const {
     uploads,
     uploadFilesToProject,
+    asperaUploadToProject,
     cancelUpload,
     uploadMethod,
     setUploadMethod,
@@ -80,6 +81,30 @@ export default function DashboardLayout() {
 
   const requestUpload = useCallback(
     (inputFiles: File[], preferredProjectId?: Id<"projects">) => {
+      if (uploadMethod === "aspera" && asperaAvailable) {
+        if (preferredProjectId) {
+          void asperaUploadToProject(preferredProjectId);
+          return;
+        }
+
+        if (
+          routeProjectId &&
+          (canUploadToCurrentProject || uploadTargets === undefined)
+        ) {
+          void asperaUploadToProject(routeProjectId);
+          return;
+        }
+
+        if (uploadTargets && uploadTargets.length === 0) {
+          window.alert("You do not have upload access to any projects.");
+          return;
+        }
+
+        setPendingFiles(null);
+        setProjectPickerOpen(true);
+        return;
+      }
+
       const files = inputFiles.filter(isVideoFile);
       if (files.length === 0) return;
 
@@ -105,15 +130,32 @@ export default function DashboardLayout() {
       setProjectPickerOpen(true);
     },
     [
+      asperaAvailable,
+      asperaUploadToProject,
       canUploadToCurrentProject,
       routeProjectId,
+      uploadMethod,
       uploadFilesToProject,
       uploadTargets,
     ],
   );
 
+  const requestAsperaUpload = useCallback(
+    (projectId: Id<"projects">) => {
+      void asperaUploadToProject(projectId);
+    },
+    [asperaUploadToProject],
+  );
+
   const handleProjectSelected = useCallback(
     (projectId: Id<"projects">) => {
+      if (uploadMethod === "aspera" && asperaAvailable) {
+        setProjectPickerOpen(false);
+        setPendingFiles(null);
+        void asperaUploadToProject(projectId);
+        return;
+      }
+
       const files = pendingFiles;
       if (!files || files.length === 0) return;
 
@@ -121,7 +163,7 @@ export default function DashboardLayout() {
       setPendingFiles(null);
       void uploadFilesToProject(projectId, files);
     },
-    [pendingFiles, uploadFilesToProject],
+    [asperaAvailable, asperaUploadToProject, pendingFiles, uploadFilesToProject, uploadMethod],
   );
 
   const handleProjectPickerOpenChange = useCallback((open: boolean) => {
@@ -181,13 +223,14 @@ export default function DashboardLayout() {
   const uploadContext = useMemo(
     () => ({
       requestUpload,
+      requestAsperaUpload,
       uploads,
       cancelUpload,
       uploadMethod,
       setUploadMethod,
       asperaAvailable,
     }),
-    [requestUpload, uploads, cancelUpload, uploadMethod, setUploadMethod, asperaAvailable],
+    [requestUpload, requestAsperaUpload, uploads, cancelUpload, uploadMethod, setUploadMethod, asperaAvailable],
   );
   const isResolvingPublicPlaybackExemption =
     Boolean(isLoaded && !userId && routeVideoId) && publicPlaybackId === undefined;

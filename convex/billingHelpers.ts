@@ -74,14 +74,13 @@ export async function getTeamSubscriptionState(
     throw new Error("Team not found");
   }
 
-  const subscription = await getTeamSubscriptionByOrgId(ctx, teamId);
-  const subscriptionPlan = resolvePlanFromStripePriceId(subscription?.priceId);
-  const plan = subscriptionPlan ?? normalizeStoredTeamPlan(team.plan);
-  const hasActiveSubscription = hasActiveTeamSubscriptionStatus(
-    subscription?.status,
-  );
-
-  return { team, subscription, plan, hasActiveSubscription };
+  // BYPASS: Stripe billing disabled — always return active
+  return {
+    team,
+    subscription: null,
+    plan: normalizeStoredTeamPlan(team.plan) as TeamPlan,
+    hasActiveSubscription: true,
+  };
 }
 
 export async function getTeamStorageUsedBytes(
@@ -119,11 +118,15 @@ export async function assertTeamHasActiveSubscription(
   ctx: BillingCtx,
   teamId: Id<"teams">,
 ) {
-  const state = await getTeamSubscriptionState(ctx, teamId);
-  if (!state.hasActiveSubscription) {
-    throw new Error("An active Basic or Pro subscription is required.");
-  }
-  return state;
+  // BYPASS: Stripe billing disabled — all teams treated as active basic plan
+  const team = await ctx.db.get(teamId);
+  if (!team) throw new Error("Team not found");
+  return {
+    team,
+    subscription: null,
+    plan: "basic" as TeamPlan,
+    hasActiveSubscription: true,
+  };
 }
 
 export async function assertTeamCanStoreBytes(
@@ -131,16 +134,10 @@ export async function assertTeamCanStoreBytes(
   teamId: Id<"teams">,
   incomingBytes: number,
 ) {
+  // BYPASS: Stripe billing disabled — no storage limit enforcement
   const state = await assertTeamHasActiveSubscription(ctx, teamId);
   const storageUsedBytes = await getTeamStorageUsedBytes(ctx, teamId);
   const storageLimitBytes = TEAM_PLAN_STORAGE_LIMIT_BYTES[state.plan];
-  const requestedBytes = Number.isFinite(incomingBytes) ? Math.max(0, incomingBytes) : 0;
-
-  if (storageUsedBytes + requestedBytes > storageLimitBytes) {
-    throw new Error(
-      `Storage limit reached for the ${state.plan} plan. Upgrade to continue uploading.`,
-    );
-  }
 
   return {
     ...state,

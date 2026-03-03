@@ -8,6 +8,7 @@ type UploadMethod = "s3-direct" | "aspera";
 
 interface DropZoneProps {
   onFilesSelected: (files: File[]) => void;
+  onAsperaUpload?: () => void;
   disabled?: boolean;
   className?: string;
   asperaAvailable?: boolean;
@@ -17,6 +18,7 @@ interface DropZoneProps {
 
 export function DropZone({
   onFilesSelected,
+  onAsperaUpload,
   disabled,
   className,
   asperaAvailable,
@@ -42,6 +44,10 @@ export function DropZone({
       setIsDragActive(false);
 
       if (disabled) return;
+      if (uploadMethod === "aspera") {
+        onAsperaUpload?.();
+        return;
+      }
 
       const files = Array.from(e.dataTransfer.files).filter((file) =>
         file.type.startsWith("video/")
@@ -51,7 +57,7 @@ export function DropZone({
         onFilesSelected(files);
       }
     },
-    [disabled, onFilesSelected]
+    [disabled, onAsperaUpload, onFilesSelected, uploadMethod]
   );
 
   const handleChange = useCallback(
@@ -108,15 +114,22 @@ export function DropZone({
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
+        onClick={
+          uploadMethod === "aspera" && onAsperaUpload && !disabled
+            ? (e) => { e.preventDefault(); onAsperaUpload(); }
+            : undefined
+        }
       >
-        <input
-          type="file"
-          accept="video/*"
-          multiple
-          onChange={handleChange}
-          disabled={disabled}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
-        />
+        {uploadMethod !== "aspera" && (
+          <input
+            type="file"
+            accept="video/*"
+            multiple
+            onChange={handleChange}
+            disabled={disabled}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+          />
+        )}
         <div className="flex flex-col items-center gap-4">
           <div
             className={cn(
@@ -130,7 +143,11 @@ export function DropZone({
           </div>
           <div>
             <p className="font-bold text-[#1a1a1a]">
-              {isDragActive ? "Drop to upload" : "Drop videos or click to upload"}
+              {uploadMethod === "aspera"
+                ? "Click to choose files with Aspera"
+                : isDragActive
+                  ? "Drop to upload"
+                  : "Drop videos or click to upload"}
             </p>
             <p className="text-sm text-[#888] mt-1">
               MP4, MOV, WebM supported

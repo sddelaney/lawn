@@ -25,6 +25,7 @@ import {
   Link as LinkIcon,
   MessageSquare,
   MoreVertical,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -63,9 +64,11 @@ export default function VideoPage() {
   });
   const updateVideo = useMutation(api.videos.update);
   const updateVideoWorkflowStatus = useMutation(api.videos.updateWorkflowStatus);
+  const deleteVideo = useMutation(api.videos.remove);
   const getPlaybackSession = useAction(api.videoActions.getPlaybackSession);
   const getOriginalPlaybackUrl = useAction(api.videoActions.getOriginalPlaybackUrl);
   const getDownloadUrl = useAction(api.videoActions.getDownloadUrl);
+  const reconcileProcessingStatus = useAction(api.videoActions.reconcileProcessingStatus);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -93,6 +96,7 @@ export default function VideoPage() {
       ? "mux720"
       : "original";
   const isUsingOriginalFallback = Boolean(activePlaybackUrl && activePlaybackUrl === originalPlaybackUrl && !playbackUrl);
+  const canEdit = video?.role !== undefined && video.role !== "viewer";
   const shouldCanonicalize =
     !!context && !context.isCanonical && pathname !== context.canonicalPath;
   const prewarmTeamIntentHandlers = useRoutePrewarmIntent(() =>
@@ -174,6 +178,27 @@ export default function VideoPage() {
     };
   }, [getOriginalPlaybackUrl, resolvedVideoId, video?.status, video?.s3Key]);
 
+  useEffect(() => {
+    if (!resolvedVideoId || !video || video.status !== "processing" || video.role === "viewer") {
+      return;
+    }
+
+    let stopped = false;
+    const runReconcile = () => {
+      if (stopped) return;
+      void reconcileProcessingStatus({ videoId: resolvedVideoId }).catch((error) => {
+        console.error("Failed to reconcile processing status:", error);
+      });
+    };
+
+    runReconcile();
+    const interval = window.setInterval(runReconcile, 15000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [reconcileProcessingStatus, resolvedVideoId, video?.status, video?.role]);
+
   const handleTimeUpdate = useCallback((time: number) => {
     setCurrentTime(time);
   }, []);
@@ -224,6 +249,22 @@ export default function VideoPage() {
     [resolvedVideoId, updateVideoWorkflowStatus],
   );
 
+  const handleDeleteVideo = useCallback(async () => {
+    if (!resolvedVideoId || !resolvedProjectId || !canEdit) return;
+    if (!confirm("Delete this video? This cannot be undone.")) return;
+
+    try {
+      await deleteVideo({ videoId: resolvedVideoId });
+      navigate({
+        to: projectPath(resolvedTeamSlug, resolvedProjectId),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to delete video";
+      console.error("Failed to delete video:", error);
+      window.alert(message);
+    }
+  }, [canEdit, deleteVideo, navigate, resolvedProjectId, resolvedTeamSlug, resolvedVideoId]);
+
   const startEditingTitle = () => {
     if (video) {
       setEditedTitle(video.title);
@@ -247,7 +288,6 @@ export default function VideoPage() {
     );
   }
 
-  const canEdit = video.role !== "viewer";
   const canComment = true;
 
   return (
@@ -339,6 +379,18 @@ export default function VideoPage() {
             <LinkIcon className="mr-1.5 h-4 w-4" />
             Share
           </Button>
+          {canEdit && (
+            <Button
+              variant="outline"
+              className="text-[#dc2626] border-[#dc2626]/40 hover:text-[#dc2626]"
+              onClick={() => {
+                void handleDeleteVideo();
+              }}
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" />
+              Delete
+            </Button>
+          )}
           <Button
             variant="outline"
             className="lg:hidden"
@@ -376,6 +428,17 @@ export default function VideoPage() {
               <MessageSquare className="mr-2 h-4 w-4" />
               Comments{comments && comments.length > 0 ? ` (${comments.length})` : ""}
             </DropdownMenuItem>
+            {canEdit && (
+              <DropdownMenuItem
+                className="text-[#dc2626] focus:text-[#dc2626]"
+                onSelect={() => {
+                  void handleDeleteVideo();
+                }}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
           </DropdownMenu>
         </div>

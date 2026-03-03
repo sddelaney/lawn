@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as aspera from "../aspera.js";
 import type * as auth from "../auth.js";
 import type * as billing from "../billing.js";
 import type * as billingHelpers from "../billingHelpers.js";
 import type * as comments from "../comments.js";
+import type * as hsts from "../hsts.js";
 import type * as http from "../http.js";
 import type * as mux from "../mux.js";
 import type * as muxActions from "../muxActions.js";
@@ -33,10 +35,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aspera: typeof aspera;
   auth: typeof auth;
   billing: typeof billing;
   billingHelpers: typeof billingHelpers;
   comments: typeof comments;
+  hsts: typeof hsts;
   http: typeof http;
   mux: typeof mux;
   muxActions: typeof muxActions;

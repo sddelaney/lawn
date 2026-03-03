@@ -44,22 +44,32 @@ export async function getUploadTransferSpec(
 ): Promise<Record<string, unknown>> {
   const { nodeUrl, nodeUser, nodePassword } = getHstsConfig();
 
-  const response = await fetch(`${nodeUrl}/files/upload_setup`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: buildAuthHeader(nodeUser, nodePassword),
-    },
-    body: JSON.stringify({
-      transfer_requests: [
-        {
-          transfer_request: {
-            paths: [{ destination: destinationPath }],
+  const url = `${nodeUrl}/files/upload_setup`;
+  console.log(`[HSTS] POST ${url} destination=${destinationPath}`);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: buildAuthHeader(nodeUser, nodePassword),
+      },
+      body: JSON.stringify({
+        transfer_requests: [
+          {
+            transfer_request: {
+              paths: [{ destination: destinationPath }],
+            },
           },
-        },
-      ],
-    }),
-  });
+        ],
+      }),
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const cause = err instanceof Error && (err as any).cause ? JSON.stringify((err as any).cause) : "none";
+    throw new Error(`[HSTS] fetch failed: ${msg} | cause: ${cause}`);
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");

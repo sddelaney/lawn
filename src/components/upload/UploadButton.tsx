@@ -6,18 +6,26 @@ import { Plus } from "lucide-react";
 
 interface UploadButtonProps {
   onFilesSelected: (files: File[]) => void;
+  onAsperaUpload?: () => void;
+  uploadMethod?: "s3-direct" | "aspera";
   disabled?: boolean;
   children?: React.ReactNode;
 }
 
 export function UploadButton({
   onFilesSelected,
+  onAsperaUpload,
+  uploadMethod = "s3-direct",
   disabled,
   children,
 }: UploadButtonProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleClick = () => {
+    if (uploadMethod === "aspera") {
+      onAsperaUpload?.();
+      return;
+    }
     inputRef.current?.click();
   };
 

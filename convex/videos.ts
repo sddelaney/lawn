@@ -113,7 +113,17 @@ export const list = query({
 export const get = query({
   args: { videoId: v.id("videos") },
   handler: async (ctx, args) => {
-    const { video, membership } = await requireVideoAccess(ctx, args.videoId);
+    let access;
+    try {
+      access = await requireVideoAccess(ctx, args.videoId);
+    } catch (error) {
+      if (error instanceof Error && error.message === "Video not found") {
+        return null;
+      }
+      throw error;
+    }
+
+    const { video, membership } = access;
     return {
       ...video,
       uploaderName: video.uploaderName ?? "Unknown",
@@ -247,7 +257,7 @@ export const updateWorkflowStatus = mutation({
 export const remove = mutation({
   args: { videoId: v.id("videos") },
   handler: async (ctx, args) => {
-    await requireVideoAccess(ctx, args.videoId, "admin");
+    await requireVideoAccess(ctx, args.videoId, "member");
 
     const comments = await ctx.db
       .query("comments")

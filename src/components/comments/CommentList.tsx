@@ -24,7 +24,10 @@ export function CommentList({
   highlightedCommentId,
   canResolve = false,
 }: CommentListProps) {
-  const queriedComments = useQuery(api.comments.getThreaded, { videoId });
+  const queriedComments = useQuery(
+    api.comments.getThreaded,
+    providedComments !== undefined ? "skip" : { videoId },
+  );
   const comments = providedComments ?? queriedComments;
 
   if (comments === undefined) {

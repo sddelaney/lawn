@@ -8,6 +8,10 @@ import {
 } from "./auth";
 import { resolveActiveShareGrant } from "./shareAccess";
 
+function isVideoNotFoundError(error: unknown): boolean {
+  return error instanceof Error && error.message === "Video not found";
+}
+
 function toThreadedComments<T extends { _id: string; parentId?: string; timestampSeconds: number; _creationTime: number }>(
   comments: T[],
 ) {
@@ -64,7 +68,14 @@ async function getPublicVideoByPublicId(
 export const list = query({
   args: { videoId: v.id("videos") },
   handler: async (ctx, args) => {
-    await requireVideoAccess(ctx, args.videoId);
+    try {
+      await requireVideoAccess(ctx, args.videoId);
+    } catch (error) {
+      if (isVideoNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
 
     const comments = await ctx.db
       .query("comments")
@@ -239,7 +250,14 @@ export const toggleResolved = mutation({
 export const getThreaded = query({
   args: { videoId: v.id("videos") },
   handler: async (ctx, args) => {
-    await requireVideoAccess(ctx, args.videoId);
+    try {
+      await requireVideoAccess(ctx, args.videoId);
+    } catch (error) {
+      if (isVideoNotFoundError(error)) {
+        return [];
+      }
+      throw error;
+    }
 
     const comments = await ctx.db
       .query("comments")

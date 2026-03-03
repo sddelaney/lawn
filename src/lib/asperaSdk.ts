@@ -13,6 +13,7 @@ declare global {
         asperaSpec: unknown,
       ): Promise<{ uuid: string }>;
       stopTransfer(id: string): Promise<void>;
+      showSelectFileDialog(options: unknown): Promise<unknown>;
       registerActivityCallback(
         cb: (activity: unknown) => void,
       ): unknown;
@@ -79,10 +80,43 @@ export function stopTransfer(id: string): Promise<void> {
   return sdk().stopTransfer(id);
 }
 
+/**
+ * Open the SDK's native file selection dialog.
+ * Returns an object with `dataTransfer.files` containing SDK-authorized paths.
+ */
+export function showSelectFileDialog(
+  options: { allowMultipleSelection?: boolean } = {},
+): Promise<unknown> {
+  return sdk().showSelectFileDialog(options);
+}
+
 export function registerActivityCallback(
   cb: (activity: unknown) => void,
 ): unknown {
   return sdk().registerActivityCallback(cb);
+}
+
+// ---------------------------------------------------------------------------
+// Dialog cancellation detection
+// ---------------------------------------------------------------------------
+
+export function isDialogCancellation(error: unknown): boolean {
+  if (error == null || typeof error !== "object") return true;
+
+  const err = error as Record<string, unknown>;
+  if (err.error !== true) return true;
+
+  const debugData = err.debugData;
+  if (debugData && typeof debugData === "object") {
+    const code = (debugData as Record<string, unknown>).code;
+    if (code === -32005) return false;
+  }
+
+  const msg =
+    typeof err.message === "string" ? err.message.toLowerCase() : "";
+  if (!msg || msg.includes("closed") || msg.includes("cancel")) return true;
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
