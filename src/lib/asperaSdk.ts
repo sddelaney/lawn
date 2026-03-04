@@ -17,6 +17,7 @@ declare global {
       registerActivityCallback(
         cb: (activity: unknown) => void,
       ): unknown;
+      getAllTransfers(): Promise<unknown>;
     };
   }
 }
@@ -94,6 +95,15 @@ export function registerActivityCallback(
   cb: (activity: unknown) => void,
 ): unknown {
   return sdk().registerActivityCallback(cb);
+}
+
+export async function getAllTransfers(): Promise<TransferInfo[]> {
+  try {
+    const raw = await withTimeout(sdk().getAllTransfers(), 3000, "getAllTransfers");
+    return parseAllTransfers(raw);
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------

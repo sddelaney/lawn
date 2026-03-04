@@ -11,9 +11,15 @@ import {
   stopTransfer,
   showSelectFileDialog,
   registerActivityCallback,
+  getAllTransfers,
   parseAllTransfers,
   isDialogCancellation,
 } from "@/lib/asperaSdk";
+import {
+  readAndPurgeTransferMap,
+  removeTransferMapping,
+  saveTransferMapping,
+} from "@/lib/asperaTransferMap";
 
 export type UploadMethod = "s3-direct" | "aspera";
 
@@ -189,6 +195,7 @@ export function useVideoUploadManager() {
         if (info.status === "completed") {
           // Transfer finished — call markUploadComplete
           asperaMapRef.current.delete(info.uuid);
+          removeTransferMapping(info.uuid);
           setUploads((prev) =>
             prev.map((u) =>
               u.id === entry.uploadId
@@ -220,6 +227,7 @@ export function useVideoUploadManager() {
             });
         } else if (info.status === "failed") {
           asperaMapRef.current.delete(info.uuid);
+          removeTransferMapping(info.uuid);
           const errorMsg = info.errorMessage ?? "Aspera transfer failed";
           setUploads((prev) =>
             prev.map((u) =>
@@ -247,6 +255,59 @@ export function useVideoUploadManager() {
         }
       }
     });
+
+    // Reconnect to active FASP transfers from previous session
+    void (async () => {
+      const persistedMap = readAndPurgeTransferMap();
+      if (persistedMap.size === 0) return;
+
+      const activeTransfers = await getAllTransfers();
+      const activeUuids = new Set(
+        activeTransfers
+          .filter((t) => t.status === "running" || t.status === "queued")
+          .map((t) => t.uuid),
+      );
+
+      for (const [uuid, entry] of persistedMap) {
+        if (asperaMapRef.current.has(uuid)) continue;
+        if (!activeUuids.has(uuid)) continue;
+
+        asperaMapRef.current.set(uuid, entry);
+
+        const snapshot = activeTransfers.find((t) => t.uuid === uuid);
+        const pct = snapshot
+          ? Math.min(
+              Math.round(
+                snapshot.percentage > 0 && snapshot.percentage <= 1
+                  ? snapshot.percentage * 100
+                  : snapshot.bytesExpected > 0 && snapshot.bytesWritten > 0
+                    ? (snapshot.bytesWritten / snapshot.bytesExpected) * 100
+                    : 0,
+              ),
+              100,
+            )
+          : 0;
+
+        setUploads((prev) => {
+          if (prev.some((u) => u.id === entry.uploadId)) return prev;
+          return [
+            ...prev,
+            {
+              id: entry.uploadId,
+              projectId: "" as Id<"projects">,
+              file: new File([], "Reconnected transfer"),
+              videoId: entry.videoId,
+              progress: pct,
+              status: "uploading" as UploadStatus,
+              transferMethod: "aspera" as UploadMethod,
+              asperaTransferId: uuid,
+              totalBytes: snapshot?.bytesExpected ?? undefined,
+              bytesPerSecond: snapshot ? snapshot.speedKbps * 1000 : undefined,
+            },
+          ];
+        });
+      }
+    })();
   }, [asperaAvailable, markUploadComplete, markUploadFailed]);
 
   // Aspera upload: opens SDK file picker, gets authorized paths, starts FASP transfer
@@ -345,11 +406,15 @@ export function useVideoUploadManager() {
             paths: [{ source: filePath, ...(destination ? { destination } : {}) }],
           };
           const asperaTransferId = await startTransfer(fullSpec, {});
+          if (!createdVideoId) {
+            throw new Error("Failed to create video record.");
+          }
 
           asperaMapRef.current.set(asperaTransferId, {
             uploadId,
             videoId: createdVideoId,
           });
+          saveTransferMapping(asperaTransferId, createdVideoId, uploadId);
 
           setUploads((prev) =>
             prev.map((u) =>
@@ -547,6 +612,7 @@ export function useVideoUploadManager() {
       // Cancel Aspera transfer if active
       if (upload?.asperaTransferId) {
         asperaMapRef.current.delete(upload.asperaTransferId);
+        removeTransferMapping(upload.asperaTransferId);
         stopTransfer(upload.asperaTransferId).catch(console.error);
       }
       if (upload?.videoId) {
