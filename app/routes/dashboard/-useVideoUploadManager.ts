@@ -329,7 +329,7 @@ export function useVideoUploadManager() {
       // Open SDK's native file dialog — returns SDK-authorized file paths
       let result: unknown;
       try {
-        result = await showSelectFileDialog({ allowMultipleSelection: true });
+        result = await showSelectFileDialog({ multiple: true });
       } catch (error) {
         if (isDialogCancellation(error)) {
           return;
@@ -395,15 +395,12 @@ export function useVideoUploadManager() {
             contentType,
           });
 
-          // Merge SDK-authorized source path into transfer spec,
-          // preserving the destination from HSTS upload_setup.
-          const specPaths = Array.isArray((transferSpec as Record<string, unknown>).paths)
-            ? (transferSpec as { paths: Array<Record<string, string>> }).paths
-            : [];
-          const destination = specPaths[0]?.destination;
+          // Merge SDK-authorized source path into transfer spec.
+          // destination_root from HSTS already points to the target file path,
+          // so we only need to set the source — no paths[].destination needed.
           const fullSpec = {
             ...transferSpec,
-            paths: [{ source: filePath, ...(destination ? { destination } : {}) }],
+            paths: [{ source: filePath }],
           };
           const asperaTransferId = await startTransfer(fullSpec, {});
           if (!createdVideoId) {

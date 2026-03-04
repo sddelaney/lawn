@@ -116,15 +116,34 @@ export function isDialogCancellation(error: unknown): boolean {
   const err = error as Record<string, unknown>;
   if (err.error !== true) return true;
 
-  const debugData = err.debugData;
-  if (debugData && typeof debugData === "object") {
-    const code = (debugData as Record<string, unknown>).code;
-    if (code === -32005) return false;
+  const debugData = err.debugData as Record<string, unknown> | undefined;
+  const debugCode = debugData && typeof debugData === "object"
+    ? typeof (debugData as Record<string, unknown>).code === "number"
+      ? (debugData as Record<string, unknown>).code
+      : undefined
+    : undefined;
+  const topCode = typeof err.code === "number" ? err.code : undefined;
+  if (
+    topCode === -32002 || topCode === -32005 ||
+    debugCode === -32002 || debugCode === -32005
+  ) {
+    return true;
   }
 
+  const debugMessage = debugData && typeof debugData === "object"
+    ? typeof (debugData as Record<string, unknown>).message === "string"
+      ? (debugData as Record<string, unknown>).message.toLowerCase()
+      : ""
+    : "";
   const msg =
     typeof err.message === "string" ? err.message.toLowerCase() : "";
-  if (!msg || msg.includes("closed") || msg.includes("cancel")) return true;
+  if (
+    !msg ||
+    msg.includes("closed") ||
+    msg.includes("cancel") ||
+    debugMessage.includes("closed") ||
+    debugMessage.includes("cancel")
+  ) return true;
 
   return false;
 }
