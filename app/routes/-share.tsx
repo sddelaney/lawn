@@ -12,6 +12,7 @@ import { formatDuration, formatTimestamp, formatRelativeTime } from "@/lib/utils
 import { useVideoPresence } from "@/lib/useVideoPresence";
 import { VideoWatchers } from "@/components/presence/VideoWatchers";
 import { Lock, Video, AlertCircle, MessageSquare, Clock } from "lucide-react";
+import { buildDownloadFilename } from "@/lib/videoDownloadFilename";
 import { useShareData } from "./-share.data";
 
 export default function SharePage() {
@@ -22,6 +23,7 @@ export default function SharePage() {
   const issueAccessGrant = useMutation(api.shareLinks.issueAccessGrant);
   const createComment = useMutation(api.comments.createForShareGrant);
   const getPlaybackSession = useAction(api.videoActions.getSharedPlaybackSession);
+  const getDownloadUrl = useAction(api.videoActions.getSharedDownloadUrl);
 
   const [grantToken, setGrantToken] = useState<string | null>(null);
   const [hasAttemptedAutoGrant, setHasAttemptedAutoGrant] = useState(false);
@@ -156,6 +158,21 @@ export default function SharePage() {
       setIsSubmittingComment(false);
     }
   };
+
+  const requestDownload = useCallback(async () => {
+    if (!grantToken || !videoData?.allowDownload || !videoData?.video?.s3Key) return null;
+    const filename = buildDownloadFilename(videoData.video.title, videoData.video.s3Key);
+    try {
+      const result = await getDownloadUrl({ grantToken });
+      return {
+        ...result,
+        filename: result.filename ?? filename,
+      };
+    } catch (error) {
+      console.error("Failed to prepare shared download:", error);
+      return null;
+    }
+  }, [getDownloadUrl, grantToken, videoData?.allowDownload]);
 
   const isBootstrappingShare =
     shareInfo === undefined ||
@@ -292,7 +309,9 @@ export default function SharePage() {
               poster={playbackSession.posterUrl}
               comments={flattenedComments}
               onTimeUpdate={setCurrentTime}
-              allowDownload={false}
+              allowDownload={Boolean(videoData.allowDownload && video.s3Key)}
+              downloadFilename={buildDownloadFilename(video.title, video.s3Key)}
+              onRequestDownload={requestDownload}
             />
           ) : (
             <div className="relative aspect-video overflow-hidden rounded-xl border border-zinc-800/80 bg-black shadow-[0_10px_40px_rgba(0,0,0,0.45)]">

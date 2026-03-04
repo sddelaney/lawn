@@ -6,6 +6,14 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { VideoPlayer, type VideoPlayerHandle } from "@/components/video-player/VideoPlayer";
 import { CommentList } from "@/components/comments/CommentList";
 import { CommentInput } from "@/components/comments/CommentInput";
@@ -15,6 +23,12 @@ import {
   type VideoWorkflowStatus,
 } from "@/components/videos/VideoWorkflowStatusControl";
 import { formatDuration } from "@/lib/utils";
+import { buildDownloadFilename } from "@/lib/videoDownloadFilename";
+import {
+  formatDownloadMethodLabel,
+  type DownloadMethod,
+  useVideoDownload,
+} from "@/lib/useVideoDownload";
 import { useVideoPresence } from "@/lib/useVideoPresence";
 import { VideoWatchers } from "@/components/presence/VideoWatchers";
 import { DashboardHeader } from "@/components/DashboardHeader";
@@ -22,6 +36,7 @@ import {
   Edit2,
   Check,
   X,
+  Download,
   Link as LinkIcon,
   MessageSquare,
   MoreVertical,
@@ -69,12 +84,15 @@ export default function VideoPage() {
   const getOriginalPlaybackUrl = useAction(api.videoActions.getOriginalPlaybackUrl);
   const getDownloadUrl = useAction(api.videoActions.getDownloadUrl);
   const reconcileProcessingStatus = useAction(api.videoActions.reconcileProcessingStatus);
+  const { asperaDownloadEnabled, defaultDownloadMethod, downloadVideo } = useVideoDownload();
 
   const [currentTime, setCurrentTime] = useState(0);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editedTitle, setEditedTitle] = useState("");
   const [highlightedCommentId, setHighlightedCommentId] = useState<Id<"comments"> | undefined>();
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isDeletingVideo, setIsDeletingVideo] = useState(false);
   const [mobileCommentsOpen, setMobileCommentsOpen] = useState(false);
   const [playbackSession, setPlaybackSession] = useState<{
     url: string;
@@ -208,8 +226,20 @@ export default function VideoPage() {
     setTimeout(() => setHighlightedCommentId(undefined), 3000);
   }, []);
 
+  const handleDownloadViaMethod = useCallback(
+    async (method: DownloadMethod) => {
+      if (!video || video.status !== "ready" || !resolvedVideoId) return;
+      await downloadVideo(resolvedVideoId, video.title, method);
+    },
+    [downloadVideo, resolvedVideoId, video],
+  );
+
   const requestDownload = useCallback(async () => {
     if (!video || video.status !== "ready" || !resolvedVideoId) return null;
+    if (defaultDownloadMethod === "fasp" && asperaDownloadEnabled) {
+      await handleDownloadViaMethod("fasp");
+      return null;
+    }
     try {
       const result = await getDownloadUrl({ videoId: resolvedVideoId });
       return result;
@@ -217,7 +247,14 @@ export default function VideoPage() {
       console.error("Failed to prepare download:", error);
       return null;
     }
-  }, [getDownloadUrl, video, resolvedVideoId]);
+  }, [
+    asperaDownloadEnabled,
+    defaultDownloadMethod,
+    getDownloadUrl,
+    handleDownloadViaMethod,
+    resolvedVideoId,
+    video,
+  ]);
 
   const handleTimestampClick = useCallback(
     (time: number) => {
@@ -249,12 +286,17 @@ export default function VideoPage() {
     [resolvedVideoId, updateVideoWorkflowStatus],
   );
 
-  const handleDeleteVideo = useCallback(async () => {
+  const handleDeleteVideo = useCallback(() => {
     if (!resolvedVideoId || !resolvedProjectId || !canEdit) return;
-    if (!confirm("Delete this video? This cannot be undone.")) return;
+    setDeleteDialogOpen(true);
+  }, [canEdit, deleteVideo, navigate, resolvedProjectId, resolvedTeamSlug, resolvedVideoId]);
 
+  const confirmDeleteVideo = useCallback(async () => {
+    if (!resolvedVideoId || !resolvedProjectId || !canEdit || isDeletingVideo) return;
+    setIsDeletingVideo(true);
     try {
       await deleteVideo({ videoId: resolvedVideoId });
+      setDeleteDialogOpen(false);
       navigate({
         to: projectPath(resolvedTeamSlug, resolvedProjectId),
       });
@@ -262,8 +304,18 @@ export default function VideoPage() {
       const message = error instanceof Error ? error.message : "Failed to delete video";
       console.error("Failed to delete video:", error);
       window.alert(message);
+    } finally {
+      setIsDeletingVideo(false);
     }
-  }, [canEdit, deleteVideo, navigate, resolvedProjectId, resolvedTeamSlug, resolvedVideoId]);
+  }, [
+    canEdit,
+    deleteVideo,
+    isDeletingVideo,
+    navigate,
+    resolvedProjectId,
+    resolvedTeamSlug,
+    resolvedVideoId,
+  ]);
 
   const startEditingTitle = () => {
     if (video) {
@@ -375,6 +427,34 @@ export default function VideoPage() {
               void handleUpdateWorkflowStatus(workflowStatus);
             }}
           />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" disabled={video.status !== "ready"}>
+                <Download className="mr-1.5 h-4 w-4" />
+                Download
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={() => {
+                  void handleDownloadViaMethod("http");
+                }}
+              >
+                {formatDownloadMethodLabel("http")}
+                {defaultDownloadMethod === "http" ? " (default)" : ""}
+              </DropdownMenuItem>
+              {asperaDownloadEnabled && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void handleDownloadViaMethod("fasp");
+                  }}
+                >
+                  {formatDownloadMethodLabel("fasp")}
+                  {defaultDownloadMethod === "fasp" ? " (default)" : ""}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" onClick={() => setShareDialogOpen(true)}>
             <LinkIcon className="mr-1.5 h-4 w-4" />
             Share
@@ -428,6 +508,28 @@ export default function VideoPage() {
               <MessageSquare className="mr-2 h-4 w-4" />
               Comments{comments && comments.length > 0 ? ` (${comments.length})` : ""}
             </DropdownMenuItem>
+            {video.status === "ready" && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  void handleDownloadViaMethod("http");
+                }}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {formatDownloadMethodLabel("http")}
+                {defaultDownloadMethod === "http" ? " (default)" : ""}
+              </DropdownMenuItem>
+            )}
+            {video.status === "ready" && asperaDownloadEnabled && (
+              <DropdownMenuItem
+                onSelect={() => {
+                  void handleDownloadViaMethod("fasp");
+                }}
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {formatDownloadMethodLabel("fasp")}
+                {defaultDownloadMethod === "fasp" ? " (default)" : ""}
+              </DropdownMenuItem>
+            )}
             {canEdit && (
               <DropdownMenuItem
                 className="text-[#dc2626] focus:text-[#dc2626]"
@@ -465,7 +567,7 @@ export default function VideoPage() {
               onTimeUpdate={handleTimeUpdate}
               onMarkerClick={handleMarkerClick}
               allowDownload={video.status === "ready"}
-              downloadFilename={`${video.title}.mp4`}
+              downloadFilename={buildDownloadFilename(video.title, video.s3Key)}
               onRequestDownload={requestDownload}
               controlsBelow
               qualityOptionsConfig={[
@@ -602,6 +704,44 @@ export default function VideoPage() {
         open={shareDialogOpen}
         onOpenChange={setShareDialogOpen}
       />
+
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          if (!isDeletingVideo) {
+            setDeleteDialogOpen(open);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Video</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete this video? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isDeletingVideo}
+              onClick={() => setDeleteDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-[#dc2626] hover:bg-[#b91c1c] text-white"
+              disabled={isDeletingVideo}
+              onClick={() => {
+                void confirmDeleteVideo();
+              }}
+            >
+              {isDeletingVideo ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { formatDuration, formatTimestamp, formatRelativeTime } from "@/lib/utils";
+import { buildDownloadFilename } from "@/lib/videoDownloadFilename";
 import { AlertCircle, MessageSquare, Clock, X } from "lucide-react";
 import { useWatchData } from "./-watch.data";
 
@@ -18,6 +19,7 @@ export default function WatchPage() {
 
   const createComment = useMutation(api.comments.createForPublic);
   const getPlaybackSession = useAction(api.videoActions.getPublicPlaybackSession);
+  const getDownloadUrl = useAction(api.videoActions.getPublicDownloadUrl);
 
   const { videoData, comments } = useWatchData({ publicId });
   const [playbackSession, setPlaybackSession] = useState<{
@@ -103,6 +105,21 @@ export default function WatchPage() {
     }
   };
 
+  const requestDownload = async () => {
+    if (!videoData?.video?.s3Key) return null;
+    const filename = buildDownloadFilename(videoData.video.title, videoData.video.s3Key);
+    try {
+      const result = await getDownloadUrl({ publicId });
+      return {
+        ...result,
+        filename: result.filename ?? filename,
+      };
+    } catch (error) {
+      console.error("Failed to prepare public download:", error);
+      return null;
+    }
+  };
+
   if (videoData === undefined) {
     return (
       <div className="min-h-screen bg-[#f0f0e8] flex items-center justify-center">
@@ -177,13 +194,15 @@ export default function WatchPage() {
         {/* Video player area */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-black">
           {playbackSession?.url ? (
-            <VideoPlayer
+          <VideoPlayer
               ref={playerRef}
               src={playbackSession.url}
               poster={playbackSession.posterUrl}
               comments={flattenedComments}
               onTimeUpdate={setCurrentTime}
-              allowDownload={false}
+              allowDownload={Boolean(video.s3Key)}
+              downloadFilename={buildDownloadFilename(video.title, video.s3Key)}
+              onRequestDownload={requestDownload}
               controlsBelow
             />
           ) : (
