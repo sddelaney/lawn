@@ -115,9 +115,11 @@ export function buildMuxPlaybackUrl(playbackId: string, token?: string): string 
 }
 
 export function buildMuxThumbnailUrl(playbackId: string, token?: string): string {
-  const base = `https://image.mux.com/${playbackId}/thumbnail.jpg?time=0`;
-  if (!token) return base;
-  return `${base}&token=${encodeURIComponent(token)}`;
+  const url = new URL(`https://image.mux.com/${playbackId}/thumbnail.jpg`);
+  if (token) {
+    url.searchParams.set("token", token);
+  }
+  return url.toString();
 }
 
 export async function signPlaybackToken(playbackId: string, expiration = "1h") {
