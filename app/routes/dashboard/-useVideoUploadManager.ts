@@ -334,10 +334,15 @@ export function useVideoUploadManager() {
             contentType,
           });
 
-          // Merge SDK-authorized source path into transfer spec
+          // Merge SDK-authorized source path into transfer spec,
+          // preserving the destination from HSTS upload_setup.
+          const specPaths = Array.isArray((transferSpec as Record<string, unknown>).paths)
+            ? (transferSpec as { paths: Array<Record<string, string>> }).paths
+            : [];
+          const destination = specPaths[0]?.destination;
           const fullSpec = {
             ...transferSpec,
-            paths: [{ source: filePath }],
+            paths: [{ source: filePath, ...(destination ? { destination } : {}) }],
           };
           const asperaTransferId = await startTransfer(fullSpec, {});
 

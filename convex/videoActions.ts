@@ -286,6 +286,7 @@ export const getUploadUrl = action({
       s3Key: key,
       fileSize: args.fileSize,
       contentType: normalizedContentType,
+      uploadMethod: "s3-direct",
     });
 
     return { url, uploadId: key };
@@ -327,7 +328,10 @@ export const markUploadComplete = action({
         throw new Error("Uploaded video file not found or empty.");
       }
       const contentLength = contentLengthRaw;
-      if (contentLength > MAX_PRESIGNED_PUT_FILE_SIZE_BYTES) {
+      // Only enforce the 5 GiB presigned PUT cap for S3 direct uploads.
+      // FASP uploads have no practical size limit.
+      const isAspera = (video as Record<string, unknown>).uploadMethod === "aspera";
+      if (!isAspera && contentLength > MAX_PRESIGNED_PUT_FILE_SIZE_BYTES) {
         throw new Error("Video file is too large for direct upload.");
       }
 
@@ -612,6 +616,7 @@ export const getAsperaUploadSpec = action({
       s3Key: key,
       fileSize: args.fileSize,
       contentType: normalizedContentType,
+      uploadMethod: "aspera",
     });
 
     const transferSpec = await getUploadTransferSpec(`/${key}`);

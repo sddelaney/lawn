@@ -286,6 +286,7 @@ export const setUploadInfo = internalMutation({
     s3Key: v.string(),
     fileSize: v.number(),
     contentType: v.string(),
+    uploadMethod: v.optional(v.union(v.literal("s3-direct"), v.literal("aspera"))),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.videoId, {
@@ -299,6 +300,7 @@ export const setUploadInfo = internalMutation({
       uploadError: undefined,
       fileSize: args.fileSize,
       contentType: args.contentType,
+      uploadMethod: args.uploadMethod ?? "s3-direct",
       status: "uploading",
     });
   },
