@@ -65,6 +65,7 @@ export default function DashboardLayout() {
     cancelUpload,
     uploadMethod,
     setUploadMethod,
+    asperaEnabled,
     asperaAvailable,
   } = useVideoUploadManager();
   const [isGlobalDragActive, setIsGlobalDragActive] = useState(false);
@@ -81,7 +82,7 @@ export default function DashboardLayout() {
 
   const requestUpload = useCallback(
     (inputFiles: File[], preferredProjectId?: Id<"projects">) => {
-      if (uploadMethod === "aspera" && asperaAvailable) {
+      if (uploadMethod === "aspera") {
         if (preferredProjectId) {
           void asperaUploadToProject(preferredProjectId);
           return;
@@ -130,7 +131,6 @@ export default function DashboardLayout() {
       setProjectPickerOpen(true);
     },
     [
-      asperaAvailable,
       asperaUploadToProject,
       canUploadToCurrentProject,
       routeProjectId,
@@ -149,7 +149,7 @@ export default function DashboardLayout() {
 
   const handleProjectSelected = useCallback(
     (projectId: Id<"projects">) => {
-      if (uploadMethod === "aspera" && asperaAvailable) {
+      if (uploadMethod === "aspera") {
         setProjectPickerOpen(false);
         setPendingFiles(null);
         void asperaUploadToProject(projectId);
@@ -163,7 +163,7 @@ export default function DashboardLayout() {
       setPendingFiles(null);
       void uploadFilesToProject(projectId, files);
     },
-    [asperaAvailable, asperaUploadToProject, pendingFiles, uploadFilesToProject, uploadMethod],
+    [asperaUploadToProject, pendingFiles, uploadFilesToProject, uploadMethod],
   );
 
   const handleProjectPickerOpenChange = useCallback((open: boolean) => {
@@ -228,9 +228,19 @@ export default function DashboardLayout() {
       cancelUpload,
       uploadMethod,
       setUploadMethod,
+      asperaEnabled,
       asperaAvailable,
     }),
-    [requestUpload, requestAsperaUpload, uploads, cancelUpload, uploadMethod, setUploadMethod, asperaAvailable],
+    [
+      asperaAvailable,
+      asperaEnabled,
+      cancelUpload,
+      requestAsperaUpload,
+      requestUpload,
+      setUploadMethod,
+      uploadMethod,
+      uploads,
+    ],
   );
   const isResolvingPublicPlaybackExemption =
     Boolean(isLoaded && !userId && routeVideoId) && publicPlaybackId === undefined;
@@ -297,7 +307,7 @@ export default function DashboardLayout() {
             <UploadProgress
               key={upload.id}
               fileName={upload.file.name}
-              fileSize={upload.file.size}
+              fileSize={upload.file.size || upload.totalBytes || 0}
               progress={upload.progress}
               status={upload.status}
               error={upload.error}

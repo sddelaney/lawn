@@ -17,6 +17,9 @@ import {
 
 export type UploadMethod = "s3-direct" | "aspera";
 
+const UPLOAD_METHOD_STORAGE_KEY = "lawn.uploadMethod";
+const ASPERA_INSTALL_URL = "https://www.ibm.com/aspera/connect/";
+
 export interface ManagedUploadItem {
   id: string;
   projectId: Id<"projects">;
@@ -31,6 +34,8 @@ export interface ManagedUploadItem {
   transferMethod: UploadMethod;
   /** Aspera SDK transfer UUID — set after startTransfer resolves */
   asperaTransferId?: string;
+  /** Total bytes from SDK (for FASP uploads where file.size is unknown) */
+  totalBytes?: number;
 }
 
 function createUploadId() {
@@ -57,33 +62,101 @@ function inferContentTypeFromFilename(filename: string): string {
   }
 }
 
+function readStoredUploadMethod(): { method: UploadMethod; hasStored: boolean } {
+  if (typeof window === "undefined") {
+    return { method: "s3-direct", hasStored: false };
+  }
+  const stored = window.localStorage.getItem(UPLOAD_METHOD_STORAGE_KEY);
+  if (stored === "aspera") {
+    return { method: "aspera", hasStored: true };
+  }
+  if (stored === "s3-direct") {
+    return { method: "s3-direct", hasStored: true };
+  }
+  return { method: "s3-direct", hasStored: false };
+}
+
 export function useVideoUploadManager() {
+  const initialPreference = readStoredUploadMethod();
+  const getAsperaEnabled = useAction(api.aspera.isEnabled);
   const createVideo = useMutation(api.videos.create);
   const getUploadUrl = useAction(api.videoActions.getUploadUrl);
   const getAsperaUploadSpec = useAction(api.videoActions.getAsperaUploadSpec);
   const markUploadComplete = useAction(api.videoActions.markUploadComplete);
   const markUploadFailed = useAction(api.videoActions.markUploadFailed);
   const [uploads, setUploads] = useState<ManagedUploadItem[]>([]);
-  const [uploadMethod, setUploadMethod] = useState<UploadMethod>("s3-direct");
+  const [uploadMethodState, setUploadMethodState] = useState<UploadMethod>(initialPreference.method);
+  const [hasStoredUploadMethod, setHasStoredUploadMethod] = useState(initialPreference.hasStored);
+  const [asperaEnabled, setAsperaEnabled] = useState(false);
   const [asperaAvailable, setAsperaAvailable] = useState(false);
 
-  // Initialize Aspera SDK on mount (async: init → testConnection)
-  useEffect(() => {
-    if (!isSdkAvailable()) return;
+  const setUploadMethod = useCallback((method: UploadMethod) => {
+    setUploadMethodState(method);
+    setHasStoredUploadMethod(true);
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(UPLOAD_METHOD_STORAGE_KEY, method);
+  }, []);
 
-    initSdk({ appId: "lawn" })
-      .then(() => testConnection())
-      .then((connected) => {
+  const promptInstallAspera = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const shouldOpenInstaller = window.confirm(
+      "Aspera FASP upload requires Aspera Connect. Install it now?",
+    );
+    if (shouldOpenInstaller) {
+      window.open(ASPERA_INSTALL_URL, "_blank", "noopener,noreferrer");
+    }
+  }, []);
+
+  const ensureAsperaReady = useCallback(async (): Promise<boolean> => {
+    if (!isSdkAvailable()) {
+      return false;
+    }
+
+    try {
+      await initSdk({ appId: "lawn" });
+    } catch {
+      // SDK may already be initialized by another flow.
+    }
+
+    return testConnection();
+  }, []);
+
+  // Initialize Aspera feature flag + availability.
+  useEffect(() => {
+    let cancelled = false;
+
+    void getAsperaEnabled({})
+      .then(async (enabled) => {
+        if (cancelled) return;
+
+        setAsperaEnabled(enabled);
+        if (!enabled) {
+          setAsperaAvailable(false);
+          return;
+        }
+
+        const connected = await ensureAsperaReady().catch(() => false);
+        if (cancelled) return;
+
         setAsperaAvailable(connected);
-        if (connected) {
-          setUploadMethod("aspera");
+        if (connected && !hasStoredUploadMethod) {
+          setUploadMethodState("aspera");
+          setHasStoredUploadMethod(true);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(UPLOAD_METHOD_STORAGE_KEY, "aspera");
+          }
         }
       })
-      .catch((err) => {
-        console.warn("Aspera SDK init failed:", err);
+      .catch(() => {
+        if (cancelled) return;
+        setAsperaEnabled(false);
         setAsperaAvailable(false);
       });
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ensureAsperaReady, getAsperaEnabled, hasStoredUploadMethod]);
 
   // Track Aspera transfer UUID → local upload ID mapping
   const asperaMapRef = useRef<Map<string, { uploadId: string; videoId: Id<"videos"> }>>(new Map());
@@ -102,6 +175,16 @@ export function useVideoUploadManager() {
         const remainingSec = info.remainingUsec > 0
           ? Math.ceil(info.remainingUsec / 1_000_000)
           : null;
+
+        // SDK reports percentage as 0-1 fraction; normalize to 0-100.
+        // Fall back to bytesWritten/bytesExpected if percentage is missing.
+        let pct = info.percentage;
+        if (pct > 0 && pct <= 1 && info.bytesExpected > 0) {
+          pct = pct * 100;
+        } else if (pct === 0 && info.bytesExpected > 0 && info.bytesWritten > 0) {
+          pct = (info.bytesWritten / info.bytesExpected) * 100;
+        }
+        const progressPct = Math.min(Math.round(pct), 100);
 
         if (info.status === "completed") {
           // Transfer finished — call markUploadComplete
@@ -152,10 +235,11 @@ export function useVideoUploadManager() {
               u.id === entry.uploadId
                 ? {
                     ...u,
-                    progress: Math.round(info.percentage),
+                    progress: progressPct,
                     bytesPerSecond: speedBytes,
                     estimatedSecondsRemaining: remainingSec,
                     status: "uploading" as UploadStatus,
+                    totalBytes: info.bytesExpected > 0 ? info.bytesExpected : u.totalBytes,
                   }
                 : u,
             ),
@@ -168,6 +252,19 @@ export function useVideoUploadManager() {
   // Aspera upload: opens SDK file picker, gets authorized paths, starts FASP transfer
   const asperaUploadToProject = useCallback(
     async (projectId: Id<"projects">) => {
+      if (!asperaEnabled) {
+        window.alert("Aspera uploads are not enabled for this environment.");
+        return;
+      }
+
+      const ready = await ensureAsperaReady();
+      if (!ready) {
+        setAsperaAvailable(false);
+        promptInstallAspera();
+        return;
+      }
+      setAsperaAvailable(true);
+
       // Open SDK's native file dialog — returns SDK-authorized file paths
       let result: unknown;
       try {
@@ -271,7 +368,14 @@ export function useVideoUploadManager() {
         }
       }
     },
-    [createVideo, getAsperaUploadSpec, markUploadFailed],
+    [
+      asperaEnabled,
+      createVideo,
+      ensureAsperaReady,
+      getAsperaUploadSpec,
+      markUploadFailed,
+      promptInstallAspera,
+    ],
   );
 
   const uploadFilesToProject = useCallback(
@@ -448,13 +552,17 @@ export function useVideoUploadManager() {
     [uploads, markUploadFailed],
   );
 
+  const effectiveUploadMethod: UploadMethod =
+    asperaEnabled ? uploadMethodState : "s3-direct";
+
   return {
     uploads,
     uploadFilesToProject,
     asperaUploadToProject,
     cancelUpload,
-    uploadMethod,
+    uploadMethod: effectiveUploadMethod,
     setUploadMethod,
+    asperaEnabled,
     asperaAvailable,
   };
 }
